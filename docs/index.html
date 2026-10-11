@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydrograph lab</title>
+<style>
+:root{
+  --paper:#EDF1F0; --panel:#F8FAF9; --ink:#14262D; --muted:#56676C; --line:#C6D1CD;
+  --rain:#9CC7D4; --runoff:#1D5C7A; --alt:#C9801E; --focus:#1F6F8B;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--paper);color:var(--ink);line-height:1.45;overflow:hidden}
+h1{margin:0;font-size:1.55rem;font-weight:650}
+header{padding:0 0 12px}
+header p{margin:4px 0 0;color:var(--muted)}
+h2{margin:0 0 8px;font-size:1rem;font-weight:650}
+.app{display:grid;grid-template-columns:minmax(340px,38%) minmax(0,1fr);height:100vh;height:100dvh}
+.left{overflow-y:auto;padding:16px 10px 16px 20px;display:grid;gap:12px;align-content:start}
+.stack{overflow-y:auto;padding:16px 20px 24px 10px;display:grid;gap:16px;align-content:start;min-width:0}
+@media (max-width:900px){body{overflow:auto}.app{display:block;height:auto}.left,.stack{overflow:visible;padding:12px}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.grid{display:grid;gap:8px}
+.row{display:grid;grid-template-columns:182px 1fr 70px;gap:10px;align-items:center}
+.row[hidden],.pair[hidden]{display:none}
+.row label,.pair label{font-size:.9rem}
+.pair{display:grid;grid-template-columns:182px 1fr;gap:10px;align-items:center}
+select,input[type=number],textarea{font:inherit;padding:5px 7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);min-width:0;width:100%}
+textarea{min-height:64px;resize:vertical}
+input[type=range]{width:100%;accent-color:#1F6F8B}
+input:disabled,select:disabled{opacity:.5}
+button{font:inherit;padding:7px 14px;border:1px solid var(--ink);border-radius:6px;background:var(--ink);color:#fff;cursor:pointer}
+button.quiet{background:#fff;color:var(--ink);border-color:var(--line);padding:5px 10px}
+button[aria-pressed=true]{background:var(--alt);border-color:var(--alt)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.hint{font-size:.82rem;color:var(--muted);margin:0}
+.check{display:flex;gap:8px;align-items:center;font-size:.92rem}
+details{font-size:.9rem}
+summary{cursor:pointer;font-weight:600}
+details .grid{margin-top:8px}
+canvas{display:block;width:100%;height:clamp(420px,62vh,720px);border-radius:6px;background:#F3F7F6}
+.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.key{font-size:.85rem;color:var(--muted)}
+.sw[hidden]{display:none}
+.sw{display:inline-block;width:12px;height:12px;margin:0 5px -1px 12px;border-radius:2px}
+.warn{margin:10px 0 0;padding:8px 10px;border-radius:6px;background:#FBF0DD;color:#6B4308;font-size:.9rem}
+table{width:100%;border-collapse:collapse;font-size:.92rem;font-variant-numeric:tabular-nums}
+th,td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left;color:var(--muted);font-weight:400}
+th{font-weight:650}
+td.alt,th.alt{color:#8A5410}
+.method p{margin:6px 0}
+.method code{background:#E6ECEA;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="left">
+  <header>
+    <h1>Hydrograph lab</h1>
+    <p>Turn a storm into a flood hydrograph with the SCS Curve Number method and a triangular unit hydrograph.</p>
+  </header>
+
+  <section aria-label="Catchment">
+    <h2>Catchment</h2>
+    <div class="grid" id="g_catch">
+      <div class="pair"><label for="cond">Soil moisture</label>
+        <select id="cond"><option value="dry">Dry</option><option value="normal" selected>Normal</option><option value="wet">Wet</option></select></div>
+    </div>
+    <details style="margin-top:10px"><summary>Estimate time of concentration</summary>
+      <div class="grid">
+        <div class="pair"><label for="kl">Stream length (m)</label><input id="kl" type="number" min="10" step="10" value="5000"></div>
+        <div class="pair"><label for="ks">Slope (m/m)</label><input id="ks" type="number" min="0.0001" step="0.001" value="0.02"></div>
+        <div style="display:flex;gap:10px;align-items:center"><button type="button" class="quiet" id="kuse">Use this value</button><span class="hint" id="kout"></span></div>
+        <p class="hint">Kirpich formula: tc = 0.0195 L<sup>0.77</sup> S<sup>-0.385</sup> minutes.</p>
+      </div>
+    </details>
+  </section>
+
+  <section aria-label="Storm">
+    <h2>Storm</h2>
+    <div class="grid" id="g_storm">
+      <div class="pair"><label for="shape">Shape</label>
+        <select id="shape">
+          <option value="uniform">Uniform</option><option value="front">Front-loaded</option>
+          <option value="middle" selected>Middle-peaked</option><option value="back">Back-loaded</option>
+          <option value="scs24">SCS Type II, 24 h</option><option value="custom">My own values</option>
+        </select></div>
+      <div id="customBox" hidden>
+        <textarea id="custom" aria-label="Rainfall in mm for each time step" placeholder="Rainfall in mm for each time step, separated by commas or spaces"></textarea>
+        <p class="hint" id="customNote"></p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-label="Model settings">
+    <h2>Model settings</h2>
+    <div class="grid">
+      <div class="pair"><label for="dt">Time step (h)</label><input id="dt" type="number" min="0.02" max="1" step="0.01"></div>
+      <div class="pair"><label for="ia">Initial loss ratio</label><input id="ia" type="number" min="0" max="0.5" step="0.01"></div>
+      <div class="pair"><label for="base">Baseflow (m³/s)</label><input id="base" type="number" min="0" step="0.1"></div>
+    </div>
+    <p class="hint" style="margin-top:8px">Initial loss = ratio × S. The textbook value is 0.2.</p>
+  </section>
+
+  <section aria-label="Compare">
+    <h2>Compare</h2>
+    <label class="check"><input type="checkbox" id="cmp"> Compare with a second scenario (for example after urbanization)</label>
+    <div class="grid" id="g_cmp" style="margin-top:10px" hidden></div>
+  </section>
+</aside>
+
+<div class="stack">
+  <section aria-label="Hydrograph">
+    <canvas id="chart" role="img" aria-label="Rainfall bars hanging above the flood hydrograph"></canvas>
+    <div class="bar">
+      <button type="button" id="play">Play storm</button>
+      <span class="key"><span class="sw" style="background:var(--rain)"></span>rain<span class="sw" style="background:var(--runoff)"></span>runoff (rain that reaches the river)<span class="sw" style="background:var(--alt)" id="swB" hidden></span><span id="keyB" hidden>second scenario</span></span>
+    </div>
+    <div id="warn"></div>
+  </section>
+  <section aria-label="Results">
+    <h2>Results</h2>
+    <table id="results"></table>
+  </section>
+  <section class="method" aria-label="Method">
+    <details><summary>Method and assumptions</summary>
+      <p><b>Losses.</b> <code>S = 25400/CN − 254</code> (mm), initial loss <code>Ia = ratio × S</code>, and runoff <code>Q = (P − Ia)² / (P − Ia + S)</code> for <code>P &gt; Ia</code>, applied to cumulative rainfall. With ratio 0.2 this is the textbook <code>(P − 0.2S)² / (P + 0.8S)</code>. Dry and wet soil use the standard conversions of the normal curve number.</p>
+      <p><b>Unit hydrograph.</b> SCS triangular: lag = 0.6 tc, time to peak Tp = dt/2 + lag, peak <code>Qp = 0.208 A / Tp</code> (m³/s per mm), base time 2.67 Tp. Ordinates are scaled slightly so the volume is exactly A × 1000 m³ per mm of runoff.</p>
+      <p><b>Hydrograph.</b> The runoff of every time step is convolved with the unit hydrograph, and the baseflow is added.</p>
+      <p><b>Limits.</b> The catchment is treated as one lump, the response is assumed linear, the triangle is an approximation, and the curve number does not change during the storm. Use dt ≤ 0.133 tc for a smooth result.</p>
+    </details>
+  </section>
+</div>
+</div>
+<script>
+// ---- hydrology (same method as hydrograph_lab/core.py) ----
+const TYPE2=[[0,0],[2,.022],[4,.048],[6,.080],[7,.098],[8,.120],[8.5,.133],[9,.147],[9.5,.163],[9.75,.172],[10,.181],[10.5,.204],[11,.235],[11.5,.283],[11.75,.357],[12,.663],[12.5,.735],[13,.772],[13.5,.799],[14,.820],[16,.880],[20,.952],[24,1]];
+function interp(x,pts){
+  if(x<=pts[0][0])return pts[0][1];
+  for(let i=1;i<pts.length;i++){if(x<=pts[i][0]){const a=pts[i-1],b=pts[i];return a[1]+(b[1]-a[1])*(x-a[0])/(b[0]-a[0]);}}
+  return pts[pts.length-1][1];
+}
+function retention(cn){return 25400/cn-254;}
+function adjustCn(cn,cond){
+  if(cond==='dry')return 4.2*cn/(10-0.058*cn);
+  if(cond==='wet')return 23*cn/(10+0.13*cn);
+  return cn;
+}
+function makeStorm(shape,depth,dur,dt){
+  if(shape==='scs24')dur=24;
+  const n=Math.max(1,Math.round(dur/dt)),F=new Float64Array(n+1);
+  for(let i=0;i<=n;i++){
+    const x=i/n;
+    F[i]= shape==='uniform'?x : shape==='front'?1-(1-x)*(1-x) : shape==='back'?x*x :
+          shape==='middle'?(x<=0.5?2*x*x:1-2*(1-x)*(1-x)) : interp(x*24,TYPE2);
+  }
+  const r=new Float64Array(n);for(let i=0;i<n;i++)r[i]=depth*(F[i+1]-F[i]);
+  return r;
+}
+function unitHydrograph(A,tc,dt){
+  const tp=dt/2+0.6*tc,tb=2.67*tp,qp=0.208*A/tp,k=Math.ceil(tb/dt),u=new Float64Array(k+1);
+  let sum=0;
+  for(let i=0;i<=k;i++){const t=i*dt;u[i]=t<=tp?qp*t/tp:(t<tb?qp*(tb-t)/(tb-tp):0);sum+=u[i];}
+  const f=A*1000/(sum*dt*3600);for(let i=0;i<=k;i++)u[i]*=f;
+  return {u,tp,tb};
+}
+function runModel(A,cn,tc,rain,dt,cond,iaRatio,base){
+  const cnU=adjustCn(cn,cond),S=retention(cnU),n=rain.length;
+  const runoff=new Float64Array(n);let cumP=0,prevQ=0;
+  for(let i=0;i<n;i++){
+    cumP+=rain[i];
+    const ex=Math.max(cumP-iaRatio*S,0),q=ex>0?ex*ex/(ex+S):0;
+    runoff[i]=q-prevQ;prevQ=q;
+  }
+  const {u,tp,tb}=unitHydrograph(A,tc,dt),len=n+u.length-1,Q=new Float64Array(len);
+  for(let m=0;m<n;m++){if(runoff[m]===0)continue;for(let k=1;k<u.length;k++)Q[m+k]+=runoff[m]*u[k];}
+  let peak=-1,ip=0,depth=0,total=0;
+  for(let i=0;i<len;i++){Q[i]+=base;if(Q[i]>peak){peak=Q[i];ip=i;}}
+  for(let i=0;i<n;i++){depth+=runoff[i];total+=rain[i];}
+  const time=new Float64Array(len);for(let i=0;i<len;i++)time[i]=i*dt;
+  return {dt,time,Q,rain,runoff,cnU,S,Ia:iaRatio*S,total,depth,volume:depth*A*1000,
+    coef:total>0?depth/total:0,peak,tPeak:depth>0?ip*dt:null,lag:0.6*tc,tp,tb,unitPeak:0.208*A/tp};
+}
+// ---- end hydrology ----
+
+const $=id=>document.getElementById(id);
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const INK='#14262D',RAIN='#9CC7D4',RUN='#1D5C7A',ALT='#C9801E';
+const state={area:25,cn:75,cond:'normal',tc:2,shape:'middle',depth:100,dur:6,dt:0.1,ia:0.2,base:0,cmp:false,cnB:90,tcB:1.2,custom:''};
+const SL=[
+  {k:'area',label:'Catchment area (km²)',min:1,max:500,step:1,g:'g_catch'},
+  {k:'cn',label:'Curve number (normal soil)',min:30,max:98,step:1,g:'g_catch'},
+  {k:'tc',label:'Time of concentration (h)',min:0.2,max:24,step:0.1,g:'g_catch'},
+  {k:'depth',label:'Storm depth (mm)',min:5,max:400,step:1,g:'g_storm'},
+  {k:'dur',label:'Storm duration (h)',min:0.5,max:24,step:0.5,g:'g_storm'},
+  {k:'cnB',label:'Second scenario: curve number',min:30,max:98,step:1,g:'g_cmp'},
+  {k:'tcB',label:'Second scenario: tc (h)',min:0.2,max:24,step:0.1,g:'g_cmp'}
+];
+const rowEl={};
+SL.forEach(d=>{
+  const row=document.createElement('div');row.className='row';
+  row.innerHTML=`<label for="r_${d.k}">${d.label}</label><input type="range" id="r_${d.k}" min="${d.min}" max="${d.max}" step="${d.step}"><input type="number" id="n_${d.k}" min="${d.min}" max="${d.max}" step="${d.step}" aria-label="${d.label}">`;
+  const host=$(d.g);
+  if(d.g==='g_catch')host.insertBefore(row,host.firstChild===null?null:$('cond').parentElement);else host.appendChild(row);
+  rowEl[d.k]=row;
+  const r=row.querySelector('[type=range]'),n=row.querySelector('[type=number]');
+  const set=v=>{if(isNaN(v))return;v=Math.min(d.max,Math.max(d.min,v));state[d.k]=v;r.value=v;n.value=v;update();};
+  r.addEventListener('input',()=>set(+r.value));
+  n.addEventListener('change',()=>set(+n.value));
+  d.sync=()=>{r.value=state[d.k];n.value=+(+state[d.k]).toFixed(2);r.disabled=n.disabled=d.off||false;};
+  d.sync();
+});
+['dt','ia','base'].forEach(k=>{$(k).value=state[k];$(k).addEventListener('change',e=>{const v=+e.target.value;if(!isNaN(v)){state[k]=Math.min(+e.target.max||Infinity,Math.max(+e.target.min||0,v));e.target.value=state[k];update();}});});
+$('cond').addEventListener('change',e=>{state.cond=e.target.value;update();});
+$('shape').addEventListener('change',e=>{state.shape=e.target.value;update();});
+$('custom').addEventListener('input',e=>{state.custom=e.target.value;update();});
+$('cmp').addEventListener('change',e=>{state.cmp=e.target.checked;update();});
+function kirp(){const L=+$('kl').value,S=+$('ks').value;return (L>0&&S>0)?0.0195*Math.pow(L,0.77)*Math.pow(S,-0.385)/60:NaN;}
+function kShow(){const v=kirp();$('kout').textContent=isNaN(v)?'':`tc = ${v.toFixed(2)} h`;}
+['kl','ks'].forEach(id=>$(id).addEventListener('input',kShow));kShow();
+$('kuse').addEventListener('click',()=>{const v=kirp();if(!isNaN(v)){state.tc=Math.min(24,Math.max(0.2,+v.toFixed(2)));SL.find(d=>d.k==='tc').sync();update();}});
+
+// ---- compute ----
+let A=null,B=null,tEnd=1,playing=false,cur=Infinity,dirty=true;
+function stormArray(){
+  if(state.shape==='custom'){
+    const v=state.custom.split(/[\s,;]+/).map(Number).filter(x=>!isNaN(x)&&isFinite(x)).map(x=>Math.max(0,x));
+    return v.length?Float64Array.from(v):new Float64Array([0]);
+  }
+  return makeStorm(state.shape,state.depth,state.dur,state.dt);
+}
+function update(){
+  const dur=SL.find(d=>d.k==='dur'),dep=SL.find(d=>d.k==='depth');
+  if(state.shape==='scs24')state.dur=24;
+  dur.off=(state.shape==='scs24'||state.shape==='custom');dep.off=(state.shape==='custom');
+  dur.sync();dep.sync();
+  $('customBox').hidden=state.shape!=='custom';
+  ['cnB','tcB'].forEach(k=>{rowEl[k].hidden=!state.cmp;});$('g_cmp').hidden=!state.cmp;
+  const rain=stormArray();
+  if(state.shape==='custom'){const t=rain.reduce((a,b)=>a+b,0);$('customNote').textContent=`${rain.length} steps of ${state.dt} h, total ${t.toFixed(1)} mm`;}
+  A=runModel(state.area,state.cn,state.tc,rain,state.dt,state.cond,state.ia,state.base);
+  B=state.cmp?runModel(state.area,state.cnB,state.tcB,rain,state.dt,state.cond,state.ia,state.base):null;
+  tEnd=Math.max(A.time[A.time.length-1],B?B.time[B.time.length-1]:0);
+  $('swB').hidden=$('keyB').hidden=!state.cmp;
+  const w=[];
+  const tcMin=state.cmp?Math.min(state.tc,state.tcB):state.tc;
+  if(state.dt>0.133*tcMin)w.push('The time step is coarse for this catchment. Use a step of at most 0.133 × tc for a smoother result.');
+  if(A.depth===0)w.push('No runoff: the rain stays below the initial loss, so the river only carries baseflow.');
+  $('warn').innerHTML=w.map(t=>`<p class="warn">${t}</p>`).join('');
+  drawResults();dirty=true;
+}
+
+// ---- results ----
+const f=(x,d)=>x==null?'none':x.toFixed(d==null?2:d);
+const pc=(a,b)=>(a>0?((b-a)/a*100):null);
+const sg=x=>x==null?'':(x>=0?'+':'')+x.toFixed(1)+'%';
+function drawResults(){
+  const rows=[
+    ['Rainfall depth (mm)',r=>f(r.total,1)],
+    ['Curve number used',r=>f(r.cnU,1)],
+    ['Storage S / initial loss (mm)',r=>f(r.S,1)+' / '+f(r.Ia,1)],
+    ['Runoff depth (mm)',r=>f(r.depth,1),(a,b)=>sg(pc(a.depth,b.depth))],
+    ['Runoff volume (10³ m³)',r=>f(r.volume/1000,1),(a,b)=>sg(pc(a.volume,b.volume))],
+    ['Runoff coefficient',r=>f(r.coef,2)],
+    ['Peak flow (m³/s)',r=>f(r.peak,1),(a,b)=>sg(pc(a.peak,b.peak))],
+    ['Time to peak (h)',r=>f(r.tPeak,1),(a,b)=>(a.tPeak==null||b.tPeak==null)?'':(b.tPeak-a.tPeak>=0?'+':'')+(b.tPeak-a.tPeak).toFixed(1)+' h'],
+    ['Lag time (h)',r=>f(r.lag,2)],
+    ['Unit hydrograph peak (m³/s per mm)',r=>f(r.unitPeak,2)],
+    ['Unit hydrograph base time (h)',r=>f(r.tb,1)]
+  ];
+  let h='<tr><th></th><th>'+(B?'Scenario A':'Result')+'</th>'+(B?'<th class="alt">Scenario B</th><th>Change</th>':'')+'</tr>';
+  rows.forEach(([n,fn,ch])=>{h+=`<tr><td>${n}</td><td>${fn(A)}</td>`+(B?`<td class="alt">${fn(B)}</td><td>${ch?ch(A,B):''}</td>`:'')+'</tr>';});
+  $('results').innerHTML=h;
+}
+
+// ---- chart ----
+function fit(cv){
+  const r=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;
+  const w=Math.round(r.width*d),h=Math.round(r.height*d);
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+  const c=cv.getContext('2d');c.setTransform(d,0,0,d,0,0);return [c,r.width,r.height];
+}
+function niceStep(x){const p=Math.pow(10,Math.floor(Math.log10(x))),m=x/p;return (m<=1?1:m<=2?2:m<=5?5:10)*p;}
+function drawChart(T){
+  const [c,W,H]=fit($('chart'));c.clearRect(0,0,W,H);
+  const mL=62,mR=20,mT=12,mB=40,pw=W-mL-mR,ph=H-mT-mB;
+  const rainH=ph*0.26,gap=40,qTop=mT+rainH+gap,qH=ph-rainH-gap,dt=state.dt;
+  const tStep=niceStep(tEnd/7),tMax=Math.max(tStep,Math.ceil(tEnd/tStep-1e-9)*tStep);
+  const X=t=>mL+t/tMax*pw,shown=cur===Infinity?Infinity:cur;
+  c.font='12px system-ui,sans-serif';c.textBaseline='middle';
+  // rain panel (bars hang from the top)
+  let imax=0;for(let i=0;i<A.rain.length;i++)imax=Math.max(imax,A.rain[i]/dt);
+  const iTop=imax>0?Math.ceil(imax/niceStep(imax/2))*niceStep(imax/2):1;
+  c.strokeStyle='#D3DCD9';c.lineWidth=1;c.fillStyle='#56676C';c.textAlign='right';
+  [0,0.5,1].forEach(fr=>{const y=mT+fr*rainH;c.beginPath();c.moveTo(mL,y);c.lineTo(mL+pw,y);c.stroke();c.fillText((fr*iTop).toFixed(iTop<5?1:0),mL-8,y);});
+  c.textAlign='left';c.fillText('Rain (mm/h)',mL,mT+rainH+10);
+  const bw=Math.max(dt/tMax*pw,1);
+  for(let i=0;i<A.rain.length;i++){
+    if(i*dt>shown)break;
+    const x=X(i*dt),h1=A.rain[i]/dt/iTop*rainH,h2=A.runoff[i]/dt/iTop*rainH;
+    c.fillStyle=RAIN;c.fillRect(x,mT,bw,h1);c.fillStyle=RUN;c.fillRect(x,mT,bw,h2);
+    if(B){c.strokeStyle=ALT;c.lineWidth=1.3;c.strokeRect(x+.5,mT,Math.max(bw-1,1),B.runoff[i]/dt/iTop*rainH);}
+  }
+  // discharge panel
+  const qmaxRaw=Math.max(A.peak,B?B.peak:0,1e-6)*1.1,qStep=niceStep(qmaxRaw/4),qMax=Math.ceil(qmaxRaw/qStep)*qStep;
+  const Y=q=>qTop+qH-q/qMax*qH;
+  c.strokeStyle='#D3DCD9';c.fillStyle='#56676C';c.lineWidth=1;c.textAlign='right';
+  for(let q=0;q<=qMax+1e-9;q+=qStep){c.beginPath();c.moveTo(mL,Y(q));c.lineTo(mL+pw,Y(q));c.stroke();c.fillText(q%1===0?String(q):q.toFixed(1),mL-8,Y(q));}
+  c.textAlign='left';c.fillText('Discharge (m³/s)',mL,qTop-8);
+  c.textAlign='center';
+  for(let t=0;t<=tMax+1e-9;t+=tStep){c.beginPath();c.moveTo(X(t),qTop+qH);c.lineTo(X(t),qTop+qH+5);c.strokeStyle='#8A9A9E';c.stroke();c.fillText(String(+t.toFixed(2)),X(t),qTop+qH+17);}
+  c.fillText('Time (h)',mL+pw/2,H-8);
+  if(state.base>0){c.setLineDash([5,4]);c.strokeStyle='#56676C';c.beginPath();c.moveTo(mL,Y(state.base));c.lineTo(mL+pw,Y(state.base));c.stroke();c.setLineDash([]);}
+  const draw=(R,col,fill)=>{
+    c.beginPath();let started=false,lastT=0;
+    for(let i=0;i<R.Q.length;i++){if(R.time[i]>shown)break;const x=X(R.time[i]),y=Y(R.Q[i]);started?c.lineTo(x,y):c.moveTo(x,y);started=true;lastT=R.time[i];}
+    if(!started)return;
+    if(fill){c.save();c.lineTo(X(lastT),Y(0));c.lineTo(X(0),Y(0));c.closePath();c.fillStyle='rgba(29,92,122,.18)';c.fill();c.restore();c.beginPath();
+      for(let i=0;i<R.Q.length;i++){if(R.time[i]>shown)break;const x=X(R.time[i]),y=Y(R.Q[i]);i?c.lineTo(x,y):c.moveTo(x,y);}}
+    c.strokeStyle=col;c.lineWidth=2.6;c.lineJoin='round';c.stroke();
+    if(R.tPeak!=null&&R.tPeak<=shown){
+      const px=X(R.tPeak),py=Y(R.peak);c.fillStyle='#fff';c.strokeStyle=col;c.lineWidth=2;c.beginPath();c.arc(px,py,5,0,6.2832);c.fill();c.stroke();
+      const txt=`${R.peak.toFixed(1)} m³/s at ${R.tPeak.toFixed(1)} h`,tw=c.measureText(txt).width;
+      c.fillStyle=col;c.textAlign=px+tw+14>W-4?'right':'left';c.fillText(txt,px+(c.textAlign==='left'?10:-10),py-12);
+    }
+  };
+  draw(A,RUN,true);if(B)draw(B,ALT,false);
+  // storm animation
+  if(playing){
+    c.strokeStyle='rgba(20,38,45,.45)';c.lineWidth=1;c.beginPath();c.moveTo(X(cur),mT);c.lineTo(X(cur),qTop+qH);c.stroke();
+    const i=Math.min(A.rain.length-1,Math.floor(cur/dt));
+    if(!reduce&&i>=0&&cur<A.rain.length*dt&&A.rain[i]>0){
+      c.strokeStyle='rgba(60,130,160,.55)';c.lineWidth=1.2;
+      for(let k=0;k<46;k++){const x=mL+((k*0.6180339887)%1)*pw,y=mT+((T*170+k*37)%(rainH+gap));c.beginPath();c.moveTo(x,y);c.lineTo(x-2,y+7);c.stroke();}
+    }
+  }
+}
+// ---- play + loop ----
+$('play').addEventListener('click',()=>{
+  playing=!playing;$('play').setAttribute('aria-pressed',String(playing));$('play').textContent=playing?'Stop':'Play storm';
+  cur=playing?0:Infinity;dirty=true;
+});
+new ResizeObserver(()=>{dirty=true;}).observe($('chart'));
+let Tm=0,last=performance.now();
+function frame(now){
+  const d=Math.min((now-last)/1000,0.1);last=now;Tm+=d;
+  if(playing){
+    cur+=d*tEnd/7;
+    if(cur>=tEnd){playing=false;cur=Infinity;$('play').setAttribute('aria-pressed','false');$('play').textContent='Play storm';}
+    dirty=true;
+  }
+  if(dirty){drawChart(Tm);dirty=false;}
+  requestAnimationFrame(frame);
+}
+update();requestAnimationFrame(frame);
+</script>
+</body>
+</html>
