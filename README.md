@@ -1,4 +1,6 @@
-**[Open the interactive app](https://biswashk920.github.io/hydrograph-lab/)**
+**[Open the interactive app](https://biswashk920.github.io/hydrograph_lab/)**
+https://biswashk920.github.io/hydrograph_lab/
+
 
 # Hydrograph lab
 
